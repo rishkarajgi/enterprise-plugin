@@ -1,6 +1,6 @@
 /*
-* Transaction
-*/
+ * Transaction
+ */
 
 const os = require('os')
 const _ = require('lodash')
@@ -10,8 +10,8 @@ const uuidv4 = require('uuid/v4')
 const elastic = require('elastic-apm-node')
 
 /*
-* Cache
-*/
+ * Cache
+ */
 
 // Schemas
 const schemas = {
@@ -19,17 +19,15 @@ const schemas = {
 }
 
 /*
-* Transaction Class
-*/
+ * Transaction Class
+ */
 
 class Transaction {
-
   /*
-  * Constructor
-  */
+   * Constructor
+   */
 
   constructor(data) {
-
     // Enforce required properties
     let missing
     if (!data.tenantId) missing = 'tenantId'
@@ -38,23 +36,25 @@ class Transaction {
     if (!data.stageName) missing = 'stageName'
     if (!data.computeType) missing = 'computeType'
     if (missing) {
-      throw new Error(`ServerlessSDK: Missing Configuration - To use MALT features, "${missing}" is required in your configuration`)
+      throw new Error(
+        `ServerlessSDK: Missing Configuration - To use MALT features, "${missing}" is required in your configuration`
+      )
     }
 
     this.$ = {
       schema: null,
       eTransaction: null,
-      duration: Date.now(), // start transaction timer
+      duration: new Date() // start transaction timer
     }
 
     /*
-    * Prepare transaction schema
-    */
+     * Prepare transaction schema
+     */
 
     this.$.schema = _.cloneDeep(schemas.transactionFunction)
-    this.$.schema.timestamp = (new Date()).toISOString()
+    this.$.schema.timestamp = new Date().toISOString()
     this.$.schema.transactionId = uuidv4()
-    this.$.schema.traceId = uuidv4()
+    // this.$.schema.traceId = uuidv4();
     this.$.schema.tenantId = data.tenantId
     this.$.schema.applicationName = data.applicationName
     this.$.schema.serviceName = data.serviceName
@@ -75,7 +75,7 @@ class Transaction {
     }
     // Extend Schema: If "event" is "unknown"
     if (this.$.schema.event.type === 'unknown') {
-      this.$.schema.event.timestamp = (new Date()).toISOString()
+      this.$.schema.event.timestamp = new Date().toISOString()
     }
     // Extend Schema: If "event" is "aws.apigateway"
     if (this.$.schema.event.type === 'aws.apigateway.http') {
@@ -86,15 +86,15 @@ class Transaction {
     }
 
     /*
-    * Prepare ElasticSearch
-    */
+     * Prepare ElasticSearch
+     */
 
     // Start Elastic
     if (!elastic.isStarted()) {
       elastic.start({
         serviceName: data.serviceName,
         serverUrl: 'http://apm.signalmalt.com',
-        logLevel: 'fatal', // 'trace', 'debug', 'fatal'
+        logLevel: 'fatal' // 'trace', 'debug', 'fatal'
         // secretToken: '',
       })
     }
@@ -105,10 +105,10 @@ class Transaction {
   }
 
   /*
-  * Set
-  * - Only allow properties in the schema
-  * - If you want to add properties, first add them to the schema.
-  */
+   * Set
+   * - Only allow properties in the schema
+   * - If you want to add properties, first add them to the schema.
+   */
 
   set(key, val) {
     if (!_.has(this.$.schema, key)) {
@@ -118,13 +118,13 @@ class Transaction {
   }
 
   /*
-  * TODO: Span
-  */
+   * TODO: Span
+   */
 
   /*
-  * Error
-  * - Sends the error and ends the transaction
-  */
+   * Error
+   * - Sends the error and ends the transaction
+   */
 
   error(error, cb) {
     const self = this
@@ -144,19 +144,45 @@ class Transaction {
   }
 
   /*
-  * End
-  */
+   * End
+   */
 
   end(cb) {
     // End transaction timer
-    let duration = Date.now() - this.$.duration
+    let duration = new Date().getTime() - this.$.duration.getTime()
     this.set('compute.duration', duration)
 
     // Flatten and camelCase schema because EAPM tags are only key/value=string
     let tags = flatten(this.$.schema)
     tags = camelCaseKeys(tags)
+    tags.traceId = tags.computeCustomAwsRequestId
+
     this.$.eTransaction.addTags(tags)
     this.$.eTransaction.end()
+
+    // if transaction add the request id as the transaction trace
+    this.$.schema.traceId = tags.computeCustomAwsRequestId
+    let payload = {
+      origin: 'sls-agent',
+      timestamp: new Date().toISOString(),
+      requestId: tags.computeCustomAwsRequestId,
+      type: 'transaction',
+      payload: {
+        operationName: this.$.schema.schemaType,
+        startTime: this.$.schema.timestamp,
+        endTime: new Date().toISOString(),
+        duration: duration,
+        spanContext: {
+          traceId: tags.computeCustomAwsRequestId,
+          spanId: this.$.schema.transactionId,
+          xTraceId: tags.computeCustomXTraceId,
+          baggageItems: {}
+        },
+        tags,
+        logs: {}
+      }
+    }
+    console.log(JSON.stringify(payload))
     elastic.flush()
     return cb ? setImmediate(cb) : true
   }
