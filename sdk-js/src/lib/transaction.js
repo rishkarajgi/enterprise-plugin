@@ -224,7 +224,7 @@ class Transaction {
       span.tags = tags
       envelope.payload = span
 
-      console.log(JSON.stringify(envelope))
+      console.log('SLSAGENT', JSON.stringify(envelope))
       this.processed = true
     }
   }
